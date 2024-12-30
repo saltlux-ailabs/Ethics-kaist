@@ -301,7 +301,7 @@ class DDRMTrainer(DPOTrainer):
       
     
 if __name__ == '__main__':
-    from data_config import DATASET_CONFIGS, DEFAULT_PROMPT_TEMPLATE
+    from data.data_config import DATASET_CONFIGS, DEFAULT_PROMPT_TEMPLATE
     from trl import DPOConfig
     from transformers import AutoModelForCausalLM, AutoTokenizer
     rdp = DATASET_CONFIGS['Anthropic/hh-rlhf'](prompt_template=DEFAULT_PROMPT_TEMPLATE)

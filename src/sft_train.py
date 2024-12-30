@@ -11,7 +11,7 @@ from trl import SFTTrainer, set_seed, DataCollatorForCompletionOnlyLM
 from peft import LoraConfig
 import numpy as np
 import pandas as pd
-from data_utils import PKUSyntheticRDP
+from ..data.data_utils import PKUSyntheticRDP
 tqdm.pandas()
 
 
