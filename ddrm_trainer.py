@@ -30,54 +30,43 @@ if is_wandb_available():
 
 
 class DDRMTrainer(DPOTrainer):
-    r"""
-    Initialize DPOTrainer.
+    
+    # @staticmethod
+    def get_batch_per_token_logp(
+        self,
+        logits: torch.FloatTensor,
+        labels: torch.LongTensor,
+        label_pad_token_id: int = -100,
+        is_encoder_decoder: bool = False,
+    ) -> Tuple[torch.FloatTensor, torch.LongTensor]:
+        """Compute the log probabilities of the given labels under the given logits.
 
-    Args:
-        model (`transformers.PreTrainedModel`):
-            The model to train, preferably an `AutoModelForSequenceClassification`.
-        ref_model (`PreTrainedModelWrapper`):
-            Hugging Face transformer model with a casual language modelling head. Used for implicit reward computation and loss. If no
-            reference model is provided, the trainer will create a reference model with the same architecture as the model to be optimized.
-        beta (`float`, defaults to 0.1):
-            The beta factor in DPO loss. Higher beta means less divergence from the initial policy.
-        loss_type (`str`, defaults to `"sigmoid"`):
-            The type of DPO loss to use. Either `"sigmoid"` the default DPO loss or `"hinge"` loss from SLiC paper.
-        args (`transformers.TrainingArguments`):
-            The arguments to use for training.
-        data_collator (`transformers.DataCollator`):
-            The data collator to use for training. If None is specified, the default data collator (`DPODataCollatorWithPadding`) will be used
-            which will pad the sequences to the maximum length of the sequences in the batch, given a dataset of paired sequences.
-        label_pad_token_id (`int`, defaults to `-100`):
-            The label pad token id. This argument is required if you want to use the default data collator.
-        train_dataset (`datasets.Dataset`):
-            The dataset to use for training.
-        eval_dataset (`datasets.Dataset`):
-            The dataset to use for evaluation.
-        tokenizer (`transformers.PreTrainedTokenizerBase`):
-            The tokenizer to use for training. This argument is required if you want to use the default data collator.
-        model_init (`Callable[[], transformers.PreTrainedModel]`):
-            The model initializer to use for training. If None is specified, the default model initializer will be used.
-        callbacks (`List[transformers.TrainerCallback]`):
-            The callbacks to use for training.
-        optimizers (`Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR]`):
-            The optimizer and scheduler to use for training.
-        preprocess_logits_for_metrics (`Callable[[torch.Tensor, torch.Tensor], torch.Tensor]`):
-            The function to use to preprocess the logits before computing the metrics.
-        max_length (`int`, defaults to `None`):
-            The maximum length of the sequences in the batch. This argument is required if you want to use the default data collator.
-        peft_config (`Dict`, defaults to `None`):
-            The PEFT configuration to use for training. If you pass a PEFT configuration, the model will be wrapped in a PEFT model.
-        disable_dropout (`bool`, defaults to `True`):
-            Whether or not to disable dropouts in `model` and `ref_model`.
-        generate_during_eval (`bool`, defaults to `True`):
-            Whether to sample and log generations during evaluation step.
-        compute_metrics (`Callable[[EvalPrediction], Dict]`, *optional*):
-            The function to use to compute the metrics. Must take a `EvalPrediction` and return
-            a dictionary string to metric values.
-    """
+        Args:
+            logits: Logits of the model (unnormalized). Shape: (batch_size, sequence_length, vocab_size)
+            labels: Labels for which to compute the log probabilities. Label tokens with a value of label_pad_token_id are ignored. Shape: (batch_size, sequence_length)
+            label_pad_token_id: The label pad token id.
+            is_encoder_decoder: Whether the model is an encoder-decoder model.
 
+        Returns:
+            A Tuple of two tensor of shape ((batch_size,), (batch_size,)) containing the sum of log probabilities of the given labels under the given logits in the first tensor and the number of non-masked tokens in the second tensor.
+        """
+        if logits.shape[:-1] != labels.shape:
+            raise ValueError(
+                f"Logits (batch and sequence length dim) {logits.shape[:-1]} and labels must have the same shape {labels.shape}."
+            )
 
+        if not is_encoder_decoder:
+            labels = labels[:, 1:].clone()
+            logits = logits[:, :-1, :]
+        loss_mask = labels != label_pad_token_id
+
+        # dummy token; we'll ignore the losses on these tokens later
+        labels[labels == label_pad_token_id] = 0
+
+        per_token_logps = torch.gather(logits.log_softmax(-1), dim=2, index=labels.unsqueeze(2)).squeeze(2)
+        # return (per_token_logps * loss_mask).sum(-1), loss_mask.sum(-1)
+        return per_token_logps, loss_mask
+    
     def concatenated_forward(
         self, model: nn.Module, batch: Dict[str, Union[List, torch.LongTensor]]
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
@@ -122,13 +111,13 @@ class DDRMTrainer(DPOTrainer):
             seq_len = concatenated_batch["concatenated_labels"].shape[1]
             all_logits = all_logits[:, -seq_len:] 
 
-        all_logps, size_completion = self.get_batch_logps(
+        all_per_token_logp, all_per_token_mask = self.get_batch_per_token_logp(
             all_logits,
             concatenated_batch["concatenated_labels"],
-            # average_log_prob=self.loss_type == "ipo",
             is_encoder_decoder=self.is_encoder_decoder,
             label_pad_token_id=self.label_pad_token_id,
         )
+
 
         def cross_entropy_loss(logits, labels):
             if not self.is_encoder_decoder:
@@ -147,25 +136,37 @@ class DDRMTrainer(DPOTrainer):
         labels = concatenated_batch["concatenated_labels"].clone()
         nll_loss = cross_entropy_loss(all_logits[:len_chosen], labels[:len_chosen])
 
-        if self.loss_type == "ipo":
-            all_logps = all_logps / size_completion
-
-        chosen_logps = all_logps[:len_chosen]
-        rejected_logps = all_logps[len_chosen:]
+        all_per_token_chosen_logp = all_per_token_logp[:len_chosen]
+        all_per_token_rejected_logp = all_per_token_logp[len_chosen:]
 
         chosen_logits = all_logits[:len_chosen]
         rejected_logits = all_logits[len_chosen:]
+        
+        chosen_mask = all_per_token_mask[:len_chosen]
+        rejected_mask = all_per_token_mask[len_chosen:]
         
         chosen_labels = labels[:len_chosen]
         rejected_labels = labels[len_chosen:]
 
         if self.aux_loss_enabled:
-            return (chosen_logps, rejected_logps, chosen_logits, rejected_logits, nll_loss, outputs.aux_loss)
+            return (all_per_token_chosen_logp, 
+                    all_per_token_rejected_logp, 
+                    chosen_logits, 
+                    rejected_logits, 
+                    chosen_mask,
+                    rejected_mask,
+                    nll_loss, outputs.aux_loss)
 
-        return (chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_labels, rejected_labels, nll_loss)
+        return (all_per_token_chosen_logp, 
+                all_per_token_rejected_logp, 
+                chosen_logits, 
+                rejected_logits, 
+                chosen_labels, 
+                rejected_labels,
+                chosen_mask,
+                rejected_mask, 
+                nll_loss)
 
-    
-    
     def get_batch_loss_metrics(
         self,
         model,
@@ -174,7 +175,6 @@ class DDRMTrainer(DPOTrainer):
     ):
         """Compute the DPO loss and other metrics for the given batch of inputs for train or test."""
         metrics = {}
-
         forward_output = self.concatenated_forward(model, batch)
         (
             policy_chosen_logps,
@@ -183,38 +183,19 @@ class DDRMTrainer(DPOTrainer):
             policy_rejected_logits,
             chosen_labels,
             rejected_labels,
+            chosen_mask,
+            rejected_mask,
             policy_nll_loss,
-        ) = forward_output[:7]
+        ) = forward_output[:9]
+        
         if self.aux_loss_enabled:
-            aux_loss = forward_output[7]
-
-        # # if reference_chosen_logps and reference_rejected_logps in batch use them, otherwise use the reference model
-        # if (
-        #     "reference_chosen_logps" in batch
-        #     and "reference_rejected_logps" in batch
-        #     and (self.precompute_ref_log_probs or self.args.rpo_alpha is not None)
-        # ):
-        #     reference_chosen_logps = batch["reference_chosen_logps"]
-        #     reference_rejected_logps = batch["reference_rejected_logps"]
-        # else:
-        #     with torch.no_grad():
-        #         if self.ref_model is None:
-        #             with self.null_ref_context():
-        #                 reference_chosen_logps, reference_rejected_logps = self.concatenated_forward(
-        #                     self.model, batch
-        #                 )[:2]
-        #         else:
-        #             reference_chosen_logps, reference_rejected_logps = self.concatenated_forward(
-        #                 self.ref_model, batch
-        #             )[:2]
+            aux_loss = forward_output[9]
 
         losses, chosen_rewards, rejected_rewards = self.ddmr_loss(
             policy_chosen_logps,
             policy_rejected_logps,
-            policy_chosen_logits,
-            policy_rejected_logits,
-            chosen_labels,
-            rejected_labels
+            chosen_mask,
+            rejected_mask,
         )
         reward_accuracies = (chosen_rewards > rejected_rewards).float()
 
@@ -243,25 +224,9 @@ class DDRMTrainer(DPOTrainer):
         self,
         policy_chosen_logps: torch.FloatTensor,
         policy_rejected_logps: torch.FloatTensor,
-        policy_chosen_logits: torch.FloatTensor,
-        policy_rejected_logits: torch.FloatTensor,
-        chosen_labels: torch.FloatTensor,
-        rejected_labels: torch.FloatTensor,
+        chosen_mask: torch.FloatTensor,
+        rejected_mask: torch.FloatTensor,
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
-        """Compute the DPO loss for a batch of policy and reference model log probabilities.
-
-        Args:
-            policy_chosen_logps: Log probabilities of the policy model for the chosen responses. Shape: (batch_size,)
-            policy_rejected_logps: Log probabilities of the policy model for the rejected responses. Shape: (batch_size,)
-            reference_chosen_logps: Log probabilities of the reference model for the chosen responses. Shape: (batch_size,)
-            reference_rejected_logps: Log probabilities of the reference model for the rejected responses. Shape: (batch_size,)
-            beta: Temperature parameter for the DPO loss, typically something in the range of 0.1 to 0.5. We ignore the reference model as beta -> 0.
-
-        Returns:
-            A tuple of three tensors: (losses, chosen_rewards, rejected_rewards).
-            The losses tensor contains the DPO loss for each example in the batch.
-            The chosen_rewards and rejected_rewards tensors contain the rewards for the chosen and rejected responses, respectively.
-        """
         # chosen_rewards   = self.beta * (policy_chosen_logps   - reference_chosen_logps)
         # rejected_rewards = self.beta * (policy_rejected_logps - reference_rejected_logps)
         
@@ -284,15 +249,14 @@ class DDRMTrainer(DPOTrainer):
         # losses = - (F.logsigmoid(chosen_rewards) + F.logsigmoid(- rejected_rewards)) / 2
 
         # try 3 - + Length Normalization
-        len_chosen = (chosen_labels != self.label_pad_token_id).sum(-1)
-        len_rejected = (rejected_labels != self.label_pad_token_id).sum(-1)
-        chosen_rewards = policy_chosen_logps / len_chosen
-        rejected_rewards = policy_rejected_logps / len_rejected
-
-        # losses = - (F.logsigmoid(chosen_rewards) + F.logsigmoid(- rejected_rewards)) / 2
-        losses = - F.logsigmoid(chosen_rewards)
-
+        # len_chosen = (chosen_labels != self.label_pad_token_id).sum(-1)
+        # len_rejected = (rejected_labels != self.label_pad_token_id).sum(-1)
+        chosen_rewards = policy_chosen_logps 
+        rejected_rewards = policy_rejected_logps
         
+        chosen_loss = - F.logsigmoid(chosen_rewards) * chosen_mask
+        rejected_loss = -F.logsigmoid(-rejected_rewards) * rejected_mask
+        losses = chosen_loss + rejected_loss
         # print("chosen:", chosen_rewards)
         # print("rejected", rejected_rewards)
         
@@ -307,7 +271,6 @@ class DDRMTrainer(DPOTrainer):
 
         return losses, chosen_rewards.detach(), rejected_rewards.detach()
 
-    
     def compute_loss(
         self,
         model: Union[PreTrainedModel, nn.Module],
@@ -334,16 +297,21 @@ class DDRMTrainer(DPOTrainer):
         return loss
     
     
-# if __name__ == '__main__':
-#     from data_config import DATASET_CONFIGS, DEFAULT_PROMPT_TEMPLATE
-#     from trl import DPOConfig
-#     from transformers import AutoModelForCausalLM, AutoTokenizer
-#     rdp = DATASET_CONFIGS['Anthropic/hh-rlhf'](prompt_template=DEFAULT_PROMPT_TEMPLATE)
-#     dataset = rdp.get_preference_dataset(split='validation')
-#     model = AutoModelForCausalLM.from_pretrained(
-#         'google/gemma-2b',
-#         torch_dtype=torch.bfloat16)
-#     tokenizer = AutoTokenizer.from_pretrained('google/gemma-2b')
-#     training_args = DPOConfig('gemma-2b', logging_steps = 1, per_device_train_batch_size = 1, per_device_eval_batch_size=1)
-#     trainer = DDRMTrainer(model = model, args = training_args, tokenizer = tokenizer, train_dataset=dataset, label_pad_token_id = tokenizer.pad_token_id)
-#     trainer.train()
+    
+      
+    
+if __name__ == '__main__':
+    from data_config import DATASET_CONFIGS, DEFAULT_PROMPT_TEMPLATE
+    from trl import DPOConfig
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    rdp = DATASET_CONFIGS['Anthropic/hh-rlhf'](prompt_template=DEFAULT_PROMPT_TEMPLATE)
+    dataset = rdp.get_preference_dataset(split='validation')
+    model = AutoModelForCausalLM.from_pretrained(
+        'google/gemma-2b',
+        torch_dtype=torch.bfloat16)
+    tokenizer = AutoTokenizer.from_pretrained('google/gemma-2b')
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token_id = tokenizer.eos_token_id
+    training_args = DPOConfig('google/gemma-2b', per_device_train_batch_size = 2, per_device_eval_batch_size=1, report_to='none')
+    trainer = DDRMTrainer(model = model, args = training_args, tokenizer = tokenizer, train_dataset=dataset, label_pad_token_id = tokenizer.pad_token_id)
+    trainer.train()
