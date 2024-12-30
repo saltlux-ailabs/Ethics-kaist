@@ -53,6 +53,13 @@ class RawDatasetPreprocessor(ABC):
         rejected_only_dataset = dataset.remove_columns("chosen").rename_column("rejected", "response")
         return concatenate_datasets([chosen_only_dataset, rejected_only_dataset])
 
+    def get_dwbc_dataset(self, split):
+        """
+        return a dataset of texts with two keys "prompt", "response", "is_expert" ("raw_prompt", optional)
+        """
+        print("mapping preference to dwbc...")
+        dataset = self.get_preference_dataset(split)
+        return dataset
 
 def preprocess_anthropic_prompt_and_response(prompt_and_response):
     prompt_and_response = prompt_and_response.replace("\n\nHuman: ", "\n\nHuman:\n")
@@ -128,7 +135,7 @@ class PKUSyntheticRDP(RawDatasetPreprocessor):
 class PKUSyntheticRewardRDP(RawDatasetPreprocessor):
     # path: Optional[str] = "./data/pku_better_sft.hf"
     # path: Optional[str] = "./data/pku_better_rejected_llama3init.hf"
-    path: Optional[str] = "./data/pku_safe_with_reward_split.hf"
+    path: Optional[str] = "../data/pku_safe_with_reward_split.hf"
 
     # def __post_init__(self):
     #     assert self.prompt_template == "\n\nHuman: {prompt}\n\nAssistant:"
@@ -150,6 +157,34 @@ class PKUSyntheticRewardRDP(RawDatasetPreprocessor):
             "prompt":   prompt,
             "chosen":   example["text"][len(prompt) :],
             "rejected": example["text"][len(prompt) :],
+        }
+
+@dataclass
+class PKUSyntheticDWBCRDP(RawDatasetPreprocessor):
+    # path: Optional[str] = "./data/pku_better_sft.hf"
+    # path: Optional[str] = "./data/pku_better_rejected_llama3init.hf"
+    path: Optional[str] = "/home/mhchoi/morlhf/data/pku_safe_with_reward_split.hf"
+
+    # def __post_init__(self):
+    #     assert self.prompt_template == "\n\nHuman: {prompt}\n\nAssistant:"
+
+    def _get_raw_dataset(self, split):
+        if split == "train":
+            return load_from_disk(self.path)['train'].train_test_split(test_size=0.1, seed=0)["train"]
+        elif split == "validation":
+            return load_from_disk(self.path)['train'].train_test_split(test_size=0.1, seed=0)["test"]
+        elif split == "test":
+            return load_from_disk(self.path)['test']
+        else:
+            raise NotImplementedError
+
+    def _dataset_to_preference_formatter(self, example) -> Dict[str, str]:
+        example["text"]   = preprocess_anthropic_prompt_and_response(example["text"])
+        prompt = extract_anthropic_prompt_and_response(example["text"])
+        return {
+            "prompt": prompt,
+            "response": example["text"][len(prompt) :],
+            "is_expert": example["is_expert"],
         }
 
 if __name__ == "__main__":

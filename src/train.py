@@ -14,9 +14,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments,
 parent_path = os.path.dirname(os.path.abspath(os.path.dirname(os.getcwd())))
 if parent_path not in sys.path:
     sys.path.append(parent_path)
-from ddrm_trainer import DDRMTrainer
-from data_config import DATASET_CONFIGS, DEFAULT_PROMPT_TEMPLATE
-from data_utils import PKUSyntheticRDP
+from trainer.ddrm_trainer import DDRMTrainer
+from ..data.data_config import DATASET_CONFIGS, DEFAULT_PROMPT_TEMPLATE
+from ..data.data_utils import PKUSyntheticRDP
 
 
 def disable_progress_bar_non_local_main():
