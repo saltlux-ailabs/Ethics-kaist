@@ -92,9 +92,9 @@ class DWBCTrainer(Trainer):
 
 if __name__ == '__main__':
     from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, DataCollatorForLanguageModeling
-    from data_utils import PKUSyntheticDWBCRDP
+    from data.data_utils import PKUSyntheticDWBCRDP
     
-    model_path = '/home/mhchoi/morlhf/dwbc_llm/logs_sft/pku_safe_reward_sft_pythia1p3b_11291631/model'
+    model_path = './logs_sft/pku_safe_reward_sft_pythia1p3b_11291631/model'
     model = AutoModelForCausalLM.from_pretrained(model_path, load_in_8bit=True, device_map='cuda:0')
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -107,7 +107,7 @@ if __name__ == '__main__':
     valid_dataset = rdp.get_dwbc_dataset(split="validation")
     valid_dataset = valid_dataset.shuffle()
     args = TrainingArguments(
-        output_dir='/home/mhchoi/molrhf/dwbc_llm/no',
+        output_dir='./logs_dwbc/output',
         per_device_train_batch_size=32,
         remove_unused_columns=False,
         report_to='none',

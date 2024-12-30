@@ -104,9 +104,7 @@ class HhRlhfRDP(RawDatasetPreprocessor):
 
 @dataclass
 class PKUSyntheticRDP(RawDatasetPreprocessor):
-    # path: Optional[str] = "./data/pku_better_sft.hf"
-    # path: Optional[str] = "./data/pku_better_rejected_llama3init.hf"
-    path: Optional[str] = "./data/pku_safe_rejected_llama3init.hf"
+    path: Optional[str] = "../data/pku_safe_rejected_llama3init.hf"
 
     # def __post_init__(self):
     #     assert self.prompt_template == "\n\nHuman: {prompt}\n\nAssistant:"
@@ -133,8 +131,6 @@ class PKUSyntheticRDP(RawDatasetPreprocessor):
         
 @dataclass
 class PKUSyntheticRewardRDP(RawDatasetPreprocessor):
-    # path: Optional[str] = "./data/pku_better_sft.hf"
-    # path: Optional[str] = "./data/pku_better_rejected_llama3init.hf"
     path: Optional[str] = "../data/pku_safe_with_reward_split.hf"
 
     # def __post_init__(self):
@@ -161,9 +157,7 @@ class PKUSyntheticRewardRDP(RawDatasetPreprocessor):
 
 @dataclass
 class PKUSyntheticDWBCRDP(RawDatasetPreprocessor):
-    # path: Optional[str] = "./data/pku_better_sft.hf"
-    # path: Optional[str] = "./data/pku_better_rejected_llama3init.hf"
-    path: Optional[str] = "/home/mhchoi/morlhf/data/pku_safe_with_reward_split.hf"
+    path: Optional[str] = "../data/pku_safe_with_reward_split.hf"
 
     # def __post_init__(self):
     #     assert self.prompt_template == "\n\nHuman: {prompt}\n\nAssistant:"
