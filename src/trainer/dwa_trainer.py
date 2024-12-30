@@ -23,7 +23,7 @@ class Discriminator(nn.Module):
         return out
 
 
-class DWBCTrainer(Trainer):
+class DWATrainer(Trainer):
     def __init__(self, alpha, eta, d_update_num, pad, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.alpha = alpha
@@ -92,19 +92,19 @@ class DWBCTrainer(Trainer):
 
 if __name__ == '__main__':
     from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, DataCollatorForLanguageModeling
-    from data.data_utils import PKUSyntheticDWBCRDP
+    from data.data_utils import PKUSyntheticDWARDP
     
     model_path = './logs_sft/pku_safe_reward_sft_pythia1p3b_11291631/model'
     model = AutoModelForCausalLM.from_pretrained(model_path, load_in_8bit=True, device_map='cuda:0')
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     tokenizer.pad_token_id = tokenizer.eos_token_id
     tokenizer.padding_side = "right"
-    rdp = PKUSyntheticDWBCRDP(
+    rdp = PKUSyntheticDWARDP(
         prompt_template="\n\nHuman:\n{raw_prompt}\n\nAssistant:\n",
         sanity_check=False,
     )
-    # train_dataset = rdp.get_dwbc_dataset(split="train")
-    valid_dataset = rdp.get_dwbc_dataset(split="validation")
+    # train_dataset = rdp.get_dwa_dataset(split="train")
+    valid_dataset = rdp.get_dwa_dataset(split="validation")
     valid_dataset = valid_dataset.shuffle()
     args = TrainingArguments(
         output_dir='./logs_dwbc/output',
@@ -132,7 +132,7 @@ if __name__ == '__main__':
     
     valid_dataset = valid_dataset.map(preprocess_dataset, batched=True).remove_columns(['prompt', 'response'])
     # data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=True)
-    trainer = DWBCTrainer(
+    trainer = DWATrainer(
         model=model,
         tokenizer=tokenizer,
         args=args,

@@ -15,7 +15,7 @@ parent_path = os.path.dirname(os.path.abspath(os.path.dirname(os.getcwd())))
 if parent_path not in sys.path:
     sys.path.append(parent_path)
 from trainer.ddrm_trainer import DDRMTrainer
-from trainer.dwbc_trainer import DWBCTrainer
+from trainer.dwa_trainer import DWATrainer
 from ..data.data_config import DATASET_CONFIGS, DEFAULT_PROMPT_TEMPLATE
 from ..data.data_utils import PKUSyntheticRDP
 

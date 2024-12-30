@@ -53,11 +53,11 @@ class RawDatasetPreprocessor(ABC):
         rejected_only_dataset = dataset.remove_columns("chosen").rename_column("rejected", "response")
         return concatenate_datasets([chosen_only_dataset, rejected_only_dataset])
 
-    def get_dwbc_dataset(self, split):
+    def get_dwa_dataset(self, split):
         """
         return a dataset of texts with two keys "prompt", "response", "is_expert" ("raw_prompt", optional)
         """
-        print("mapping preference to dwbc...")
+        print("mapping preference to dwa...")
         dataset = self.get_preference_dataset(split)
         return dataset
 
@@ -156,7 +156,7 @@ class PKUSyntheticRewardRDP(RawDatasetPreprocessor):
         }
 
 @dataclass
-class PKUSyntheticDWBCRDP(RawDatasetPreprocessor):
+class PKUSyntheticDWARDP(RawDatasetPreprocessor):
     path: Optional[str] = "../data/pku_safe_with_reward_split.hf"
 
     # def __post_init__(self):
