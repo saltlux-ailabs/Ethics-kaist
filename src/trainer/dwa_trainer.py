@@ -36,13 +36,13 @@ class DWATrainer(Trainer):
     
     def compute_disc_loss(self, hidden_logits, expert_idx, other_idx, is_expert):
         disc = self.discriminator(hidden_logits)
-        # expert_disc = torch.index_select(disc, 0, expert_idx)
-        # other_disc = torch.index_select(disc, 0, other_idx)
-        # disc_loss = self.eta * torch.mean(-torch.log(expert_disc)) + torch.mean(-torch.log(1-other_disc)) - self.eta * torch.mean(-torch.log(1-expert_disc))
-        disc_loss = F.binary_cross_entropy(disc.flatten(), is_expert.to(dtype=torch.float16))
-        disc_acc = (disc.flatten().round() == is_expert).sum() / disc.shape[0]
-        # return disc_loss, expert_disc, other_disc
-        return disc_loss, disc_acc
+        expert_disc = torch.index_select(disc, 0, expert_idx)
+        other_disc = torch.index_select(disc, 0, other_idx)
+        disc_loss = self.eta * torch.mean(-torch.log(expert_disc)) + torch.mean(-torch.log(1-other_disc)) - self.eta * torch.mean(-torch.log(1-expert_disc))
+        # disc_loss = F.binary_cross_entropy(disc.flatten(), is_expert.to(dtype=torch.float16))
+        # disc_acc = (disc.flatten().round() == is_expert).sum() / disc.shape[0]
+        return disc_loss, expert_disc, other_disc
+        # return disc_loss, disc_acc
     
     def compute_logps(self, prompt_attention_mask, response_inputs, response_attention_mask, logits):
         mask = response_attention_mask[:, :-1] - prompt_attention_mask[:, 1:]
@@ -62,30 +62,30 @@ class DWATrainer(Trainer):
                         'attention_mask': inputs['response_attention_mask']}, 
                         output_hidden_states=True)      
             
-        # prob = self.compute_logps(prompt_attention_mask=inputs['attention_mask'], 
-        #                           response_inputs=inputs['response_input_ids'], 
-        #                           response_attention_mask=inputs['response_attention_mask'], 
-        #                           logits=outputs.logits)
+        prob = self.compute_logps(prompt_attention_mask=inputs['attention_mask'], 
+                                  response_inputs=inputs['response_input_ids'], 
+                                  response_attention_mask=inputs['response_attention_mask'], 
+                                  logits=outputs.logits)
 
-        # expert_prob = torch.index_select(prob, 0, expert_idx)
-        # other_prob = torch.index_select(prob, 0, other_idx)
+        expert_prob = torch.index_select(prob, 0, expert_idx)
+        other_prob = torch.index_select(prob, 0, other_idx)
         
         hidden_logits = torch.mul(inputs['response_attention_mask'][:, :1].unsqueeze(2), outputs.hidden_states[-1][:, 1:, :])
         hidden_logits = torch.mean(hidden_logits, dim=1)
-        # disc_loss, expert_disc, other_disc = self.compute_disc_loss(hidden_logits, expert_idx, other_idx, is_expert)
-        loss, acc = self.compute_disc_loss(hidden_logits, expert_idx, other_idx, is_expert)
-        # expert_denom = expert_disc * (1-expert_disc)
-        # other_denom = 1-other_disc
+        disc_loss, expert_disc, other_disc = self.compute_disc_loss(hidden_logits, expert_idx, other_idx, is_expert)
+        # loss, acc = self.compute_disc_loss(hidden_logits, expert_idx, other_idx, is_expert)
+        expert_denom = expert_disc * (1-expert_disc)
+        other_denom = 1-other_disc
         
-        # policy_loss = self.alpha * (torch.mean(- expert_prob)) - torch.mean(- expert_prob * self.eta / expert_denom) + torch.mean(-other_prob / other_denom)
+        policy_loss = self.alpha * (torch.mean(- expert_prob)) - torch.mean(- expert_prob * self.eta / expert_denom) + torch.mean(-other_prob / other_denom)
         
-        # loss = policy_loss + disc_loss
+        loss = policy_loss + disc_loss
 
-        # wandb.log({'Policy Loss': policy_loss.item(),
-        #            'Discriminator Loss': disc_loss.item(),
-        #            'Loss': loss.item()})
-        # print(f'Policy Loss: {policy_loss.item()},\n Discriminator Loss: {disc_loss.item()},\n Loss: {loss.item()}')
-        print(f'Loss: {loss.item()}, Acc: {acc.item()}')
+        wandb.log({'Policy Loss': policy_loss.item(),
+                   'Discriminator Loss': disc_loss.item(),
+                   'Loss': loss.item()})
+        print(f'Policy Loss: {policy_loss.item()},\n Discriminator Loss: {disc_loss.item()},\n Loss: {loss.item()}')
+        # print(f'Loss: {loss.item()}, Acc: {acc.item()}')
         
         return (loss, outputs) if return_outputs else loss
     
